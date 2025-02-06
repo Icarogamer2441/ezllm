@@ -20,13 +20,21 @@ class Model:
     def predict(self, X):
         return self.forward(X)
 
-    def fit(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1, progress_bar=False):
+    def fit(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1, 
+            progress_bar=False, test_train=False, 
+            output_test_train=False, output_interval=1,  # Intervalo padrão alterado para 1
+            tokenizer=None, output_path="training", img_size=None):  # Dependências para geração
         """
         Treina o modelo.
         loss_fn deve ser uma função que receba (y_pred, y_true) e retorne:
             loss, grad_loss
         progress_bar: se True, exibe uma barra de progresso simples durante o treinamento.
         """
+        # Validação dos novos parâmetros
+        if output_test_train:
+            if not tokenizer or not img_size:
+                raise ValueError("Para output_test_train=True, tokenizer e img_size devem ser fornecidos")
+        
         for epoch in range(epochs):
             # Propagação direta
             y_pred = self.forward(X)
@@ -38,16 +46,29 @@ class Model:
             for layer in self.layers:
                 if hasattr(layer, 'update'):
                     layer.update(lr)
-            if progress_bar:
-                percent = int((epoch + 1) / epochs * 100)
-                bar_length = 20
-                num_hashes = int(bar_length * (epoch + 1) / epochs)
-                bar = "[" + "#" * num_hashes + "." * (bar_length - num_hashes) + "]"
-                print(f"\rEpoch {epoch+1}/{epochs} {bar} {percent}% Loss: {loss:.4f}", end="")
-            elif verbose:
-                print(f"Epoch {epoch+1}/{epochs}, Loss: {loss:.4f}")
-        if progress_bar:
-            print()  # Nova linha após o progresso
+
+            # Cálculo do teste durante o treino
+            test_loss = None
+            if test_train:
+                test_output = self.forward(X)
+                test_loss, _ = loss_fn(test_output, y)
+            
+            # Exibição do progresso
+            if verbose or (progress_bar and epoch % 10 == 0):
+                msg = f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}"
+                if test_loss is not None:
+                    msg += f" - Test Loss: {test_loss:.4f}"
+                print(msg)
+
+            # Geração de imagem durante o treino
+            if output_test_train and (epoch % output_interval == 0 or epoch == epochs-1):
+                try:
+                    generated = self.predict(X)
+                    save_path = output_path  # Usa o nome exato fornecido
+                    tokenizer.save_image(generated, save_path, img_size)
+                    print(f" | Imagem atualizada: {save_path}")
+                except Exception as e:
+                    print(f"Erro ao gerar imagem: {str(e)}")
 
     def save(self, filepath):
         """

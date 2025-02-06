@@ -1,4 +1,5 @@
 import numpy as np
+from PIL import Image
 
 class Tokenizer:
     def __init__(self, lower=True, sep=" "):
@@ -6,6 +7,7 @@ class Tokenizer:
         self.sep = sep
         self.word2idx = {}
         self.idx2word = {}
+        self.color_mode = False  # Novo atributo para modo de cor
 
     def fit(self, texts):
         """
@@ -100,4 +102,34 @@ class Tokenizer:
             if logits.shape[0] == 1:
                 return self.idx2word[int(np.argmax(logits))]
             else:
-                return [self.idx2word[i] for i in np.argmax(logits, axis=1)] 
+                return [self.idx2word[i] for i in np.argmax(logits, axis=1)]
+
+    def fit_image(self, img):
+        """Processa uma imagem PIL para criar vocabulário de cores"""
+        self.color_mode = True
+        pixels = list(img.getdata())
+        unique_colors = set(pixels)
+        self.word2idx = {color: idx for idx, color in enumerate(unique_colors)}
+        self.idx2word = {idx: color for color, idx in self.word2idx.items()}
+
+    def encode_image_onehot(self, img):
+        """Converte imagem para one-hot encoding"""
+        pixels = list(img.getdata())
+        onehots = []
+        for color in pixels:
+            vec = np.zeros(self.vocab_size())
+            vec[self.word2idx[color]] = 1
+            onehots.append(vec)
+        return np.array(onehots)
+
+    def save_image(self, onehots, filepath, original_size):
+        """Decodifica one-hot para imagem e salva"""
+        pixels = []
+        for vec in onehots:
+            idx = np.argmax(vec)
+            pixels.append(self.idx2word[idx])
+        
+        img = Image.new('RGB', original_size)
+        img.putdata(pixels)
+        img.save(filepath)
+        print(f"Imagem salva em {filepath}") 
