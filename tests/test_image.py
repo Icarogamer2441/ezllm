@@ -46,7 +46,7 @@ def test_image_generation(input_path="input.png", output_path=None):
              tokenizer=tokenizer, output_path=output_path, img_size=img.size)
 
     # Gera a imagem a partir do modelo
-    generated = model.predict(X)
+    generated = model.predict(X, temperature=0.5)
     tokenizer.save_image(generated, output_path, img.size)
 
     print(f"Imagem gerada salva como: {output_path}")

@@ -17,8 +17,21 @@ class Model:
             grad = layer.backward(grad)
         return grad
 
-    def predict(self, X):
-        return self.forward(X)
+    def predict(self, X, temperature=None):
+        logits = self.forward(X)
+        if temperature is None:
+            return logits
+        # Import softmax from losses for probability calculation
+        from ezllm.losses import softmax
+        scaled_logits = logits / temperature
+        probs = softmax(scaled_logits)
+        preds = []
+        for p in probs:
+            idx = np.random.choice(len(p), p=p)
+            onehot = np.zeros_like(p)
+            onehot[idx] = 1
+            preds.append(onehot)
+        return np.array(preds)
 
     def fit(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1, 
             progress_bar=False, test_train=False, 
@@ -67,6 +80,55 @@ class Model:
                     save_path = output_path  # Usa o nome exato fornecido
                     tokenizer.save_image(generated, save_path, img_size)
                     print(f" | Imagem atualizada: {save_path}")
+                except Exception as e:
+                    print(f"Erro ao gerar imagem: {str(e)}")
+
+    def fit_another(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1,
+                    progress_bar=False, test_train=False, 
+                    output_test_train=False, output_interval=1,
+                    tokenizer=None, output_path="training_another", img_size=None):
+        """
+        Treina o modelo com um novo conjunto de dados (por exemplo, imagens não previamente treinadas),
+        mantendo as mesmas configurações de treinamento utilizadas anteriormente.
+
+        Útil para fine-tuning ou para adaptações em dados com as mesmas características, como imagens do mesmo tamanho.
+        loss_fn deve ser uma função que receba (y_pred, y_true) e retorne: loss, grad_loss.
+        """
+        if output_test_train:
+            if not tokenizer or not img_size:
+                raise ValueError("Para output_test_train=True, tokenizer e img_size devem ser fornecidos")
+        
+        for epoch in range(epochs):
+            # Propagação direta do novo conjunto de dados
+            y_pred = self.forward(X)
+            # Cálculo da loss e gradiente
+            loss, grad_loss = loss_fn(y_pred, y)
+            # Propaga o gradiente para atualizar os pesos
+            self.backward(grad_loss)
+            # Atualiza os parâmetros das camadas
+            for layer in self.layers:
+                if hasattr(layer, 'update'):
+                    layer.update(lr)
+
+            # Cálculo do teste durante o treino se solicitado
+            test_loss = None
+            if test_train:
+                test_output = self.forward(X)
+                test_loss, _ = loss_fn(test_output, y)
+            
+            # Exibe informações de treinamento
+            if verbose or (progress_bar and epoch % 10 == 0):
+                msg = f"[Fit Another] Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}"
+                if test_loss is not None:
+                    msg += f" - Test Loss: {test_loss:.4f}"
+                print(msg)
+
+            # Geração de imagem durante o treino, se configurado
+            if output_test_train and (epoch % output_interval == 0 or epoch == epochs-1):
+                try:
+                    generated = self.predict(X)
+                    tokenizer.save_image(generated, output_path, img_size)
+                    print(f" | Imagem atualizada: {output_path}")
                 except Exception as e:
                     print(f"Erro ao gerar imagem: {str(e)}")
 
