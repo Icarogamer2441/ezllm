@@ -1,0 +1,11 @@
+*.egg-info
+*.pkl
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+__pycache__
+ezllm/__pycache__
+ezllm/tests/__pycache__
