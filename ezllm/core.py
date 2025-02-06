@@ -1,4 +1,6 @@
 import numpy as np
+from .tokenizer import Tokenizer
+from .layers import Dense
 
 class Model:
     def __init__(self, layers):
@@ -83,54 +85,62 @@ class Model:
                 except Exception as e:
                     print(f"Erro ao gerar imagem: {str(e)}")
 
-    def fit_another(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1,
-                    progress_bar=False, test_train=False, 
-                    output_test_train=False, output_interval=1,
-                    tokenizer=None, output_path="training_another", img_size=None):
+    def fit_another(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
+                   progress_bar=False, test_train=False, output_test_train=False, 
+                   output_interval=1, output_path="training_another", img_size=None, is_image=False):
         """
-        Treina o modelo com um novo conjunto de dados (por exemplo, imagens não previamente treinadas),
-        mantendo as mesmas configurações de treinamento utilizadas anteriormente.
-
-        Útil para fine-tuning ou para adaptações em dados com as mesmas características, como imagens do mesmo tamanho.
-        loss_fn deve ser uma função que receba (y_pred, y_true) e retorne: loss, grad_loss.
-        """
-        if output_test_train:
-            if not tokenizer or not img_size:
-                raise ValueError("Para output_test_train=True, tokenizer e img_size devem ser fornecidos")
+        Expande o modelo para novas palavras e realiza o treinamento.
         
-        for epoch in range(epochs):
-            # Propagação direta do novo conjunto de dados
-            y_pred = self.forward(X)
-            # Cálculo da loss e gradiente
-            loss, grad_loss = loss_fn(y_pred, y)
-            # Propaga o gradiente para atualizar os pesos
-            self.backward(grad_loss)
-            # Atualiza os parâmetros das camadas
-            for layer in self.layers:
-                if hasattr(layer, 'update'):
-                    layer.update(lr)
-
-            # Cálculo do teste durante o treino se solicitado
-            test_loss = None
-            if test_train:
-                test_output = self.forward(X)
-                test_loss, _ = loss_fn(test_output, y)
+        Args:
+            X: Novos dados de entrada (lista de strings ou imagens)
+            y: Novos dados de saída (lista de strings ou imagens)
+            tokenizer: Tokenizer principal que será atualizado
+            is_image: Se True, usa encode_image_onehot para processar os dados
+            ... (outros parâmetros são os mesmos de antes)
+        """
+        # Adiciona novas palavras/cores ao vocabulário
+        old_vocab_size = tokenizer.vocab_size()
+        if is_image:
+            for img in X + y:
+                tokenizer.fit_image(img)
+        else:
+            tokenizer.add_vocabulary(X + y)
+        new_vocab_size = tokenizer.vocab_size()
+        
+        # Ajusta as camadas de entrada e saída se o vocabulário mudou
+        if new_vocab_size != old_vocab_size:
+            # Ajusta a camada de entrada
+            input_layer = self.layers[0]
+            if isinstance(input_layer, Dense):
+                new_weights = np.random.randn(new_vocab_size, input_layer.W.shape[1]) * np.sqrt(2. / new_vocab_size)
+                new_weights[:old_vocab_size, :] = input_layer.W
+                input_layer.W = new_weights
             
-            # Exibe informações de treinamento
-            if verbose or (progress_bar and epoch % 10 == 0):
-                msg = f"[Fit Another] Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}"
-                if test_loss is not None:
-                    msg += f" - Test Loss: {test_loss:.4f}"
-                print(msg)
-
-            # Geração de imagem durante o treino, se configurado
-            if output_test_train and (epoch % output_interval == 0 or epoch == epochs-1):
-                try:
-                    generated = self.predict(X)
-                    tokenizer.save_image(generated, output_path, img_size)
-                    print(f" | Imagem atualizada: {output_path}")
-                except Exception as e:
-                    print(f"Erro ao gerar imagem: {str(e)}")
+            # Ajusta a camada de saída
+            output_layer = self.layers[-1]
+            if isinstance(output_layer, Dense):
+                new_weights = np.random.randn(output_layer.W.shape[0], new_vocab_size) * np.sqrt(2. / output_layer.W.shape[0])
+                new_weights[:, :old_vocab_size] = output_layer.W
+                output_layer.W = new_weights
+                
+                # Ajusta o bias
+                new_bias = np.zeros((1, new_vocab_size))
+                new_bias[:, :old_vocab_size] = output_layer.b
+                output_layer.b = new_bias
+        
+        # Encode dos novos dados
+        if is_image:
+            X_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in X])
+            y_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in y])
+        else:
+            X_encoded = tokenizer.encode_onehot(X)
+            y_encoded = tokenizer.encode_onehot(y)
+        
+        # Realiza o treinamento
+        self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
+                progress_bar=progress_bar, test_train=test_train, 
+                output_test_train=output_test_train, output_interval=output_interval,
+                tokenizer=tokenizer, output_path=output_path, img_size=img_size)
 
     def save(self, filepath):
         """

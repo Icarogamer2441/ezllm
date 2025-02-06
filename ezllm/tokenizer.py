@@ -135,68 +135,26 @@ class Tokenizer:
         img.save(filepath)
         print(f"Imagem salva em {filepath}")
 
-    def adjust_model(self, model, prev_vocab_sizes=None):
+    def add_vocabulary(self, new_texts):
         """
-        Adjusts the model's input and output layers to accommodate new vocabulary size.
-        This is used before fit_another to expand the model's capacity for new data.
+        Adiciona novas palavras ao vocabulário existente.
         
         Args:
-            model: The model to adjust
-            prev_vocab_sizes: List of previous vocabulary sizes to preserve weights for
+            new_texts: Lista de strings contendo as novas palavras
         """
-        # Get the new vocabulary size
-        new_vocab_size = self.vocab_size()
+        # Processa os novos textos
+        tokens = set()
+        for text in new_texts:
+            if self.lower:
+                text = text.lower()
+            tokens.update(text.split(self.sep))
         
-        # If no previous vocab sizes provided, use the current layer sizes
-        if prev_vocab_sizes is None:
-            prev_vocab_sizes = [model.layers[0].W.shape[0]]
+        # Adiciona apenas as novas palavras ao vocabulário
+        current_vocab = set(self.word2idx.keys())
+        new_tokens = tokens - current_vocab
         
-        # Get the first and last layers
-        first_layer = model.layers[0]
-        last_layer = model.layers[-1]
-        
-        # Adjust input layer (first layer)
-        if isinstance(first_layer, Dense):
-            # Create new weights matrix with additional columns for new vocabulary
-            new_input_weights = np.random.randn(new_vocab_size, first_layer.W.shape[1]) * np.sqrt(2. / new_vocab_size)
-            
-            # Copy existing weights for each previous vocabulary size
-            start_idx = 0
-            for vocab_size in prev_vocab_sizes:
-                end_idx = start_idx + vocab_size
-                if end_idx > new_vocab_size:
-                    end_idx = new_vocab_size
-                new_input_weights[start_idx:end_idx, :] = first_layer.W[start_idx:end_idx, :]
-                start_idx = end_idx
-            
-            first_layer.W = new_input_weights
-            first_layer.input = None  # Reset input cache
-            
-        # Adjust output layer (last layer)
-        if isinstance(last_layer, Dense):
-            # Create new weights matrix with additional rows for new vocabulary
-            new_output_weights = np.random.randn(last_layer.W.shape[0], new_vocab_size) * np.sqrt(2. / last_layer.W.shape[0])
-            
-            # Copy existing weights for each previous vocabulary size
-            start_idx = 0
-            for vocab_size in prev_vocab_sizes:
-                end_idx = start_idx + vocab_size
-                if end_idx > new_vocab_size:
-                    end_idx = new_vocab_size
-                new_output_weights[:, start_idx:end_idx] = last_layer.W[:, start_idx:end_idx]
-                start_idx = end_idx
-            
-            last_layer.W = new_output_weights
-            
-            # Adjust bias
-            new_bias = np.zeros((1, new_vocab_size))
-            start_idx = 0
-            for vocab_size in prev_vocab_sizes:
-                end_idx = start_idx + vocab_size
-                if end_idx > new_vocab_size:
-                    end_idx = new_vocab_size
-                new_bias[:, start_idx:end_idx] = last_layer.b[:, start_idx:end_idx]
-                start_idx = end_idx
-                
-            last_layer.b = new_bias
-            last_layer.input = None  # Reset input cache 
+        # Atualiza os mapeamentos
+        for token in sorted(new_tokens):
+            idx = len(self.word2idx)
+            self.word2idx[token] = idx
+            self.idx2word[idx] = token 

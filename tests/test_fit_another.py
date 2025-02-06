@@ -51,27 +51,20 @@ def test_fit_another():
         if predicted_word != expected:
             print(f"AVISO: Predição incorreta para '{word}'. Esperado: '{expected}', Obtido: '{predicted_word}'")
 
-    # Fine-tuning with fit_another to expand the knowledge base
+    # Fine-tuning com fit_another para expandir a base de conhecimento
     print("\nFine-tuning with fit_another to expand the knowledge base...")
     
-    # Merge both tokenizers
-    tokenizer.fit(additional_inputs + additional_outputs)
-    tokenizer2.adjust_model(model)  # Adjust model for new vocabulary size
-    
-    # Re-encode additional data with merged tokenizer
-    X_additional = tokenizer.encode_onehot(additional_inputs)
-    y_additional = tokenizer.encode_onehot(additional_outputs)
-    
-    model.fit_another(X_additional, y_additional, epochs=1000, lr=0.01, 
-                     loss_fn=cross_entropy_loss, verbose=0)
+    # Ajusta o modelo e treina com os novos dados
+    model.fit_another(additional_inputs, additional_outputs, tokenizer=tokenizer,
+                     epochs=1000, lr=0.005, loss_fn=cross_entropy_loss, verbose=1)
 
-    # Test predictions after fine-tuning
+    # Testa as predições após o fine-tuning
     print("\nTesting predictions after fine-tuning:")
     all_inputs = initial_inputs + additional_inputs
     all_outputs = initial_outputs + additional_outputs
     
     for i, word in enumerate(all_inputs):
-        x = tokenizer.encode_onehot([word])  # Use merged tokenizer
+        x = tokenizer.encode_onehot([word])
         predicted_word = tokenizer.predict(model.predict(x))
         expected = all_outputs[i]
         print(f"Input: {word} -> Prediction: {predicted_word}, Expected: {expected}")
