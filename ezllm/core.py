@@ -86,59 +86,45 @@ class Model:
                     print(f"Erro ao gerar imagem: {str(e)}")
 
     def fit_another(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
-                   progress_bar=False, test_train=False, output_test_train=False, 
+                   progress_bar=False, test_train=False, output_test_train=False,
                    output_interval=1, output_path="training_another", img_size=None, is_image=False):
         """
-        Expande o modelo para novas palavras e realiza o treinamento.
-        
-        Args:
-            X: Novos dados de entrada (lista de strings ou imagens)
-            y: Novos dados de saída (lista de strings ou imagens)
-            tokenizer: Tokenizer principal que será atualizado
-            is_image: Se True, usa encode_image_onehot para processar os dados
-            ... (outros parâmetros são os mesmos de antes)
+        Treina o modelo com novos dados (imagens ou texto).
         """
-        # Adiciona novas palavras/cores ao vocabulário
-        old_vocab_size = tokenizer.vocab_size()
         if is_image:
-            for img in X + y:
-                tokenizer.fit_image(img)
-        else:
-            tokenizer.add_vocabulary(X + y)
-        new_vocab_size = tokenizer.vocab_size()
-        
-        # Ajusta as camadas de entrada e saída se o vocabulário mudou
-        if new_vocab_size != old_vocab_size:
-            # Ajusta a camada de entrada
-            input_layer = self.layers[0]
-            if isinstance(input_layer, Dense):
-                new_weights = np.random.randn(new_vocab_size, input_layer.W.shape[1]) * np.sqrt(2. / new_vocab_size)
-                new_weights[:old_vocab_size, :] = input_layer.W
-                input_layer.W = new_weights
-            
-            # Ajusta a camada de saída
-            output_layer = self.layers[-1]
-            if isinstance(output_layer, Dense):
-                new_weights = np.random.randn(output_layer.W.shape[0], new_vocab_size) * np.sqrt(2. / output_layer.W.shape[0])
-                new_weights[:, :old_vocab_size] = output_layer.W
-                output_layer.W = new_weights
-                
-                # Ajusta o bias
-                new_bias = np.zeros((1, new_vocab_size))
-                new_bias[:, :old_vocab_size] = output_layer.b
-                output_layer.b = new_bias
-        
-        # Encode dos novos dados
-        if is_image:
+            # Modo imagem
+            if not tokenizer.color_mode:
+                raise ValueError("O tokenizador deve estar no modo de cor (color_mode=True)")
             X_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in X])
             y_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in y])
         else:
+            # Modo texto
             X_encoded = tokenizer.encode_onehot(X)
             y_encoded = tokenizer.encode_onehot(y)
         
         # Realiza o treinamento
         self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
-                progress_bar=progress_bar, test_train=test_train, 
+                progress_bar=progress_bar, test_train=test_train,
+                output_test_train=output_test_train, output_interval=output_interval,
+                tokenizer=tokenizer, output_path=output_path, img_size=img_size)
+
+    def fit_another_image(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
+                         progress_bar=False, test_train=False, output_test_train=False,
+                         output_interval=1, output_path="training_another", img_size=None):
+        """
+        Treina o modelo com novas imagens sem sobrescrever o vocabulário existente.
+        """
+        # Verifica se o tokenizador está no modo de cor
+        if not tokenizer.color_mode:
+            raise ValueError("O tokenizador deve estar no modo de cor (color_mode=True)")
+
+        # Codifica as novas imagens
+        X_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in X])
+        y_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in y])
+
+        # Realiza o treinamento
+        self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
+                progress_bar=progress_bar, test_train=test_train,
                 output_test_train=output_test_train, output_interval=output_interval,
                 tokenizer=tokenizer, output_path=output_path, img_size=img_size)
 

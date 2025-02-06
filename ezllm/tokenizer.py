@@ -106,16 +106,35 @@ class Tokenizer:
                 return [self.idx2word[i] for i in np.argmax(logits, axis=1)]
 
     def fit_image(self, img):
-        """Processa uma imagem PIL para criar vocabulário de cores"""
+        """Processa uma imagem (PIL.Image ou numpy array) para criar vocabulário de cores"""
         self.color_mode = True
-        pixels = list(img.getdata())
+        if hasattr(img, 'getdata'):  # Se for PIL.Image
+            pixels = list(img.getdata())
+        else:  # Se for numpy array
+            pixels = img.reshape(-1, img.shape[-1])  # Transforma em lista de pixels
+            pixels = [tuple(pixel) for pixel in pixels]  # Converte para tuplas
         unique_colors = set(pixels)
         self.word2idx = {color: idx for idx, color in enumerate(unique_colors)}
         self.idx2word = {idx: color for color, idx in self.word2idx.items()}
 
     def encode_image_onehot(self, img):
         """Converte imagem para one-hot encoding"""
-        pixels = list(img.getdata())
+        if hasattr(img, 'getdata'):  # Se for PIL.Image
+            pixels = list(img.getdata())
+        else:  # Se for numpy array
+            # Ensure the image is in the correct format (H,W,C) and convert to list of RGB tuples
+            if img.ndim == 3:
+                pixels = img.reshape(-1, img.shape[-1])  # Transforma em lista de pixels
+                pixels = [tuple(int(channel) for channel in pixel) for pixel in pixels]
+            else:
+                raise ValueError("Input image must be either PIL.Image or numpy array with shape (H,W,C)")
+        
+        # Verifica se todas as cores estão no vocabulário
+        for color in pixels:
+            if color not in self.word2idx:
+                raise ValueError(f"Cor {color} não encontrada no vocabulário. "
+                               "Certifique-se de chamar fit_image antes de encode_image_onehot.")
+        
         onehots = []
         for color in pixels:
             vec = np.zeros(self.vocab_size())
@@ -157,4 +176,22 @@ class Tokenizer:
         for token in sorted(new_tokens):
             idx = len(self.word2idx)
             self.word2idx[token] = idx
-            self.idx2word[idx] = token 
+            self.idx2word[idx] = token
+
+    def fit_image_again(self, img):
+        """Adiciona novas cores ao vocabulário existente sem sobrescrever"""
+        if hasattr(img, 'getdata'):  # Se for PIL.Image
+            pixels = list(img.getdata())
+        else:  # Se for numpy array
+            pixels = img.reshape(-1, img.shape[-1])  # Transforma em lista de pixels
+            pixels = [tuple(pixel) for pixel in pixels]  # Converte para tuplas
+        
+        # Adiciona apenas as novas cores ao vocabulário
+        current_colors = set(self.word2idx.keys())
+        new_colors = set(pixels) - current_colors
+        
+        # Atualiza os mapeamentos
+        for color in new_colors:
+            idx = len(self.word2idx)
+            self.word2idx[color] = idx
+            self.idx2word[idx] = color 
