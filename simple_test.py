@@ -69,6 +69,16 @@ test_model.fit_another_image([image2], [image2],
              test_train=True,
              tokenizer=tokenizer
         )
+    
+list_images = [image, image2]
+list_target_images = [image, image2]
+
+test_model.adjust_model_toBetter_inImage(list_images, list_target_images,
+                                        tokenizer=tokenizer,
+                                        epochs=200,
+                                        lr=0.5,
+                                        loss_fn=cross_entropy_loss,
+                                        img_size=(image.size, image2.size))
 
 print("Treinamento concluído!")
 
@@ -81,4 +91,4 @@ tokenizer.save_image(pred, "ai.png", original_size=image.size)
 print("Predição concluída!")
 
 # Salva o modelo
-test_model.save("test_model.pkl") 
+test_model.save("test_model.pkl")

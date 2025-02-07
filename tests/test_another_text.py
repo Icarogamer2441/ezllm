@@ -135,28 +135,43 @@ def test_incremental_training_flow():
 
     # Cria um modelo com dimensões compatíveis com o vocabulário final
     model = Model([
-        Dense(tokenizer.vocab_size(), 64),
+        Dense(tokenizer.vocab_size(), 32),  # Reduced complexity
         ReLU(),
-        Dense(64, 128),
-        ReLU(),
-        Dense(128, tokenizer.vocab_size()),
+        Dense(32, tokenizer.vocab_size()),
     ])
 
+    # Split data for validation (using a simple 80/20 split)
+    split_idx = int(0.8 * len(X1_encoded))
+
     # Treinamento inicial com X1 e y1
-    model.fit(X1_encoded, y1_encoded, epochs=100, lr=0.01, loss_fn=cross_entropy_loss, verbose=0, tokenizer=tokenizer)
+    model.fit(X1_encoded, y1_encoded, epochs=1000, lr=0.01, loss_fn=cross_entropy_loss, verbose=0, tokenizer=tokenizer)
 
     # Treinamento incremental com os dados de X2 e X3 via fit_another_text
-    model.fit_another_text(X2_encoded, y2_encoded, tokenizer=tokenizer, epochs=100, lr=0.01, loss_fn=cross_entropy_loss, verbose=0)
-    model.fit_another_text(X3_encoded, y3_encoded, tokenizer=tokenizer, epochs=100, lr=0.01, loss_fn=cross_entropy_loss, verbose=0)
+    model.fit_another_text(X2_encoded, y2_encoded, tokenizer=tokenizer, epochs=1000, lr=0.01, loss_fn=cross_entropy_loss, verbose=0)
+    model.fit_another_text(X3_encoded, y3_encoded, tokenizer=tokenizer, epochs=1000, lr=0.01, loss_fn=cross_entropy_loss, verbose=0)
 
+    x_total = np.concatenate((X1_encoded, X2_encoded, X3_encoded))
+    y_total = np.concatenate((y1_encoded, y2_encoded, y3_encoded))
+
+    model.adjust_model_toBetter(x_total, y_total, tokenizer=tokenizer, epochs=2500, lr=0.1, loss_fn=cross_entropy_loss, verbose=0)
+    # images: model.adjust_model_toBetter_inImage(list_of_images, list_of_target_images, tokenizer, epochs=50, lr=0.01, loss_fn=cross_entropy_loss, img_size=(width, height))
+
+    passed = 0
     # Valida as predições para cada token de todos os conjuntos
-    for token in X1 + X2 + X3:
+    for token, response in zip(X1 + X2 + X3, y1 + y2 + y3):
         encoded = tokenizer.encode_onehot(token)
         if encoded.ndim == 1:
             encoded = np.array([encoded])
-        pred_logits = model.predict(encoded, temperature=1.0)
+        pred_logits = model.predict(encoded, temperature=0.5)
         predicted_token = tokenizer.predict(pred_logits)
+        print(f"Token: {token}, Resposta: {response}, Predito: {predicted_token}")
+        if predicted_token.lower() != response.lower():
+            print(f"Token previsto '{predicted_token}' não é igual à resposta '{response}'")
+        else:
+            passed += 1
         assert predicted_token in tokenizer.word2idx, f"Token previsto '{predicted_token}' não está no vocabulário"
+    
+    print(f"Passou em {passed} de {len(X1 + X2 + X3)} testes")
 
     # Testa salvamento e carregamento do modelo
     model.save("test_model.pkl")
