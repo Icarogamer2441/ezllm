@@ -178,6 +178,15 @@ class Tokenizer:
             self.word2idx[token] = idx
             self.idx2word[idx] = token
 
+    def fit_another_text(self, texts):
+        """
+        Adiciona novas palavras de textos ao vocabulário existente sem sobrescrever.
+        Se 'texts' for uma string, converte-a em lista.
+        """
+        if isinstance(texts, str):
+            texts = [texts]
+        self.add_vocabulary(texts)
+
     def fit_image_again(self, img):
         """Adiciona novas cores ao vocabulário existente sem sobrescrever"""
         if hasattr(img, 'getdata'):  # Se for PIL.Image

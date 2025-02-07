@@ -101,6 +101,11 @@ class Model:
             # Modo texto
             X_encoded = tokenizer.encode_onehot(X)
             y_encoded = tokenizer.encode_onehot(y)
+            # Se os dados forem de um único token (1D), converte para 2D (batch com 1 exemplo)
+            if X_encoded.ndim == 1:
+                X_encoded = np.array([X_encoded])
+            if y_encoded.ndim == 1:
+                y_encoded = np.array([y_encoded])
         
         # Realiza o treinamento
         self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
@@ -127,6 +132,19 @@ class Model:
                 progress_bar=progress_bar, test_train=test_train,
                 output_test_train=output_test_train, output_interval=output_interval,
                 tokenizer=tokenizer, output_path=output_path, img_size=img_size)
+
+    # Nova função adicionada para textos
+    def fit_another_text(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
+                         progress_bar=False, test_train=False, output_test_train=False,
+                         output_interval=1, output_path="training_another", img_size=None):
+        """
+        Treina o modelo com novos dados de texto sem sobrescrever o vocabulário existente.
+        """
+        # Internamente, chama fit_another com is_image definido como False para modo texto
+        self.fit_another(X, y, tokenizer, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
+                         progress_bar=progress_bar, test_train=test_train,
+                         output_test_train=output_test_train, output_interval=output_interval,
+                         output_path=output_path, img_size=img_size, is_image=False)
 
     def save(self, filepath):
         """
