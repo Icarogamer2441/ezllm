@@ -6,7 +6,7 @@ from ezllm.layers import Dense, ReLU
 from PIL import Image
 
 # Carrega as imagens
-image = Image.open("image1.png")
+image = Image.open("image.png")
 image2 = Image.open("image2.png")
 
 # Cria e ajusta o tokenizador com ambas as imagens
@@ -40,12 +40,11 @@ print("Treinando primeira imagem...")
 
 # Primeiro treinamento
 test_model.fit(X, y,
-             epochs=20,
+             epochs=500,
              lr=0.5,
              loss_fn=cross_entropy_loss,
              verbose=0,
              progress_bar=True,
-
              output_path="ai.png",
              img_size=image.size,
              output_test_train=True,
@@ -58,7 +57,7 @@ print("Treinando segunda imagem...")
 
 # Segundo treinamento
 test_model.fit_another_image([image2], [image2],
-             epochs=500,
+             epochs=200,
              lr=0.5,
              loss_fn=cross_entropy_loss,
              verbose=0,
@@ -76,8 +75,8 @@ print("Treinamento concluído!")
 print("Predizendo...")
 
 # Predição e salvamento da imagem
-pred = test_model.predict(X2)
-tokenizer.save_image(pred, "ai.png", original_size=image2.size)
+pred = test_model.predict(X)
+tokenizer.save_image(pred, "ai.png", original_size=image.size)
 
 print("Predição concluída!")
 
