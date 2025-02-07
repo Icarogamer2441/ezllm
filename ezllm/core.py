@@ -90,6 +90,7 @@ class Model:
                    output_interval=1, output_path="training_another", img_size=None, is_image=False):
         """
         Treina o modelo com novos dados (imagens ou texto).
+        Suporta dados em texto bruto ou já codificados (np.ndarray).
         """
         if is_image:
             # Modo imagem
@@ -98,14 +99,19 @@ class Model:
             X_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in X])
             y_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in y])
         else:
-            # Modo texto
-            X_encoded = tokenizer.encode_onehot(X)
-            y_encoded = tokenizer.encode_onehot(y)
-            # Se os dados forem de um único token (1D), converte para 2D (batch com 1 exemplo)
-            if X_encoded.ndim == 1:
-                X_encoded = np.array([X_encoded])
-            if y_encoded.ndim == 1:
-                y_encoded = np.array([y_encoded])
+            # Modo texto: Se X e y já forem numpy arrays, assume dados codificados.
+            if isinstance(X, np.ndarray):
+                X_encoded = X
+            else:
+                X_encoded = tokenizer.encode_onehot(X)
+                if X_encoded.ndim == 1:
+                    X_encoded = np.array([X_encoded])
+            if isinstance(y, np.ndarray):
+                y_encoded = y
+            else:
+                y_encoded = tokenizer.encode_onehot(y)
+                if y_encoded.ndim == 1:
+                    y_encoded = np.array([y_encoded])
         
         # Realiza o treinamento
         self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
