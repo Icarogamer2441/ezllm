@@ -46,40 +46,13 @@ class Model:
             preds.append(onehot)
         return np.array(preds)
 
-    def fit(self, X, y, epochs=10, lr=0.01, loss_fn=None, verbose=1,
-            progress_bar=False, test_train=False,
-            output_test_train=False, output_interval=1,
-            tokenizer=None, output_path="training", img_size=None):
-        """
-        Treina o modelo.
-        loss_fn deve ser uma função que receba (y_pred, y_true) e retorne:
-            loss, grad_loss
-        progress_bar: se True, exibe uma barra de progresso simples durante o treinamento.
-        """
-        # Se for o treinamento inicial, registra o tamanho do vocabulário "base" usado.
-        if tokenizer is not None and not hasattr(self, 'base_vocab_size'):
-            # Como X é one-hot, a posição ativa (argmax) indica o token utilizado.
-            if X.ndim == 2:
-                active_indices = set(np.argmax(X, axis=1))
-            else:
-                active_indices = {np.argmax(X)}
-            self.base_vocab_size = max(active_indices) + 1
-
-        if output_test_train:
-            if not tokenizer or not img_size:
-                raise ValueError("Para output_test_train=True, tokenizer e img_size devem ser fornecidos")
-        
+    def fit(self, X, y, epochs, lr, loss_fn, verbose=0, epoch_callback=None):
         for epoch in range(epochs):
             # Forward pass
-            y_pred = self.forward(X)
+            output = self.forward(X)
             
-            # Calcula o loss
-            loss, grad_loss = loss_fn(y_pred, y)
-            
-            # Verifica se o loss é NaN
-            if np.isnan(loss):
-                print("Loss se tornou NaN. Parando o treinamento.")
-                break
+            # Calcula a loss
+            loss, grad_loss = loss_fn(output, y)
             
             # Backward pass
             self.backward(grad_loss)
@@ -88,33 +61,14 @@ class Model:
             for layer in self.layers:
                 if hasattr(layer, 'update'):
                     layer.update(lr)
-            for att in self.attentions:
-                if hasattr(att, 'update'):
-                    att.update(lr)
             
-            # Exibição do progresso
-            if verbose or (progress_bar and epoch % 10 == 0):
-                msg = f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}"
-                if test_train:
-                    test_output = self.forward(X)
-                    test_loss, _ = loss_fn(test_output, y)
-                    msg += f" - Test Loss: {test_loss:.4f}"
-                print(msg)
-
-            # Geração de imagem durante o treino
-            if output_test_train and (epoch % output_interval == 0 or epoch == epochs-1):
-                try:
-                    generated = self.predict(X)
-                    save_path = output_path  # Usa o nome exato fornecido
-                    tokenizer.save_image(generated, save_path, img_size)
-                    print(f" | Imagem atualizada: {save_path}")
-                except Exception as e:
-                    print(f"Erro ao gerar imagem: {str(e)}")
-
-        # Armazena os dados base se não estiverem já armazenados
-        if tokenizer is not None and not hasattr(self, 'X_base'):
-            self.X_base = X.copy()
-            self.y_base = y.copy()
+            # Exibe o progresso
+            if verbose and epoch % verbose == 0:
+                print(f"Época {epoch}: Loss = {loss:.4f}")
+            
+            # Chama o callback, se fornecido
+            if epoch_callback:
+                epoch_callback(epoch, loss)
 
     def fit_another(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
                    progress_bar=False, test_train=False, output_test_train=False,
@@ -169,10 +123,7 @@ class Model:
                 y_encoded = np.concatenate((y_replay, y_encoded), axis=0)
 
         # Realiza o treinamento com fine tuning (lr reduzido)
-        self.fit(X_encoded, y_encoded, epochs=epochs, lr=fine_tune_lr, loss_fn=loss_fn, verbose=verbose,
-                progress_bar=progress_bar, test_train=test_train,
-                output_test_train=output_test_train, output_interval=output_interval,
-                tokenizer=tokenizer, output_path=output_path, img_size=img_size)
+        self.fit(X_encoded, y_encoded, epochs=epochs, lr=fine_tune_lr, loss_fn=loss_fn, verbose=verbose)
 
         # Blending: preserva fortemente os pesos para os tokens já aprendidos (base)
         default_preservation = 0.1   # Para partes não token‑específicas ou tokens novos
@@ -225,10 +176,7 @@ class Model:
         y_encoded = np.concatenate([tokenizer.encode_image_onehot(img) for img in y])
 
         # Realiza o treinamento
-        self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose,
-                progress_bar=progress_bar, test_train=test_train,
-                output_test_train=output_test_train, output_interval=output_interval,
-                tokenizer=tokenizer, output_path=output_path, img_size=img_size)
+        self.fit(X_encoded, y_encoded, epochs=epochs, lr=lr, loss_fn=loss_fn, verbose=verbose)
 
     # Nova função adicionada para textos
     def fit_another_text(self, X, y, tokenizer, epochs=10, lr=0.01, loss_fn=None, verbose=1,
@@ -259,8 +207,7 @@ class Model:
           kwargs: Parâmetros adicionais que serão repassados para self.fit().
         """
         fine_tuning_lr = lr * 0.1
-        self.fit(X, y, epochs=epochs, lr=fine_tuning_lr, loss_fn=loss_fn, verbose=verbose,
-                 tokenizer=tokenizer, **kwargs)
+        self.fit(X, y, epochs=epochs, lr=fine_tuning_lr, loss_fn=loss_fn, verbose=verbose, **kwargs)
 
     def adjust_model_toBetter_inImage(self, X, y, tokenizer, epochs=50, lr=0.01, loss_fn=None, verbose=1, img_size=None, **kwargs):
         """
