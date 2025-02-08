@@ -1,20 +1,31 @@
 import numpy as np
 from .tokenizer import Tokenizer
 from .layers import Dense
+from ezllm.attentions import MultiHeadAttention
 
 class Model:
-    def __init__(self, layers):
+    def __init__(self, layers, attentions=None):
         self.layers = layers
+        # Se o parâmetro 'attentions' for um inteiro, crie esse número de MultiHeadAttention
+        if isinstance(attentions, int):
+            self.attentions = [MultiHeadAttention(num_heads=4, dropout_rate=0.1, causal_mask=True)
+                                for _ in range(attentions)]
+        else:
+            self.attentions = attentions if attentions is not None else []
+        self.num_attention_layers = len(self.attentions)
 
     def forward(self, X):
         a = X
         for layer in self.layers:
             a = layer.forward(a)
+        for att in self.attentions:
+            a = att.forward(a)
         return a
 
     def backward(self, grad_loss):
         grad = grad_loss
-        # Propaga o gradiente de trás para frente pelas camadas
+        for att in reversed(self.attentions):
+            grad = att.backward(grad)
         for layer in reversed(self.layers):
             grad = layer.backward(grad)
         return grad
@@ -59,27 +70,34 @@ class Model:
                 raise ValueError("Para output_test_train=True, tokenizer e img_size devem ser fornecidos")
         
         for epoch in range(epochs):
-            # Propagação direta
+            # Forward pass
             y_pred = self.forward(X)
-            # Cálculo da loss e do gradiente associado (backward do loss)
+            
+            # Calcula o loss
             loss, grad_loss = loss_fn(y_pred, y)
-            # Propagação de volta
+            
+            # Verifica se o loss é NaN
+            if np.isnan(loss):
+                print("Loss se tornou NaN. Parando o treinamento.")
+                break
+            
+            # Backward pass
             self.backward(grad_loss)
-            # Atualiza os parâmetros das camadas (se a camada tiver método update)
+            
+            # Atualiza os parâmetros
             for layer in self.layers:
                 if hasattr(layer, 'update'):
                     layer.update(lr)
-
-            # Cálculo do teste durante o treino
-            test_loss = None
-            if test_train:
-                test_output = self.forward(X)
-                test_loss, _ = loss_fn(test_output, y)
+            for att in self.attentions:
+                if hasattr(att, 'update'):
+                    att.update(lr)
             
             # Exibição do progresso
             if verbose or (progress_bar and epoch % 10 == 0):
                 msg = f"Epoch {epoch+1}/{epochs} - Loss: {loss:.4f}"
-                if test_loss is not None:
+                if test_train:
+                    test_output = self.forward(X)
+                    test_loss, _ = loss_fn(test_output, y)
                     msg += f" - Test Loss: {test_loss:.4f}"
                 print(msg)
 
