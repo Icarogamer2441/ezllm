@@ -28,29 +28,24 @@ class Dense:
             return np.dot(x, self.W) + self.b
 
     def backward(self, grad_output):
-        if self.num_attention_layers > 0 and self.input.ndim == 3 and grad_output.ndim == 3:
-            batch_size, seq_len, output_dim = grad_output.shape
-            input_dim = self.W.shape[0]
-            # Reshape para (batch_size * seq_len, output_dim)
-            grad_output_reshaped = grad_output.reshape(-1, output_dim)
-            input_reshaped = self.input.reshape(-1, input_dim)
-            # Calcula o gradiente dos pesos e do bias
+        # Verifica se a entrada tem 3 dimensões
+        if self.input.ndim == 3:
+            batch_size, seq_len, input_dim = self.input.shape
+            # Reestrutura (flatten) a entrada e o gradiente para 2D
+            input_reshaped = self.input.reshape(batch_size * seq_len, input_dim)
+            grad_output_reshaped = grad_output.reshape(batch_size * seq_len, -1)
+            # Calcula os gradientes
             self.dW = np.dot(input_reshaped.T, grad_output_reshaped)
             self.db = np.sum(grad_output_reshaped, axis=0, keepdims=True)
-            # Retorna o gradiente em relação à entrada
-            grad_input_reshaped = np.dot(grad_output_reshaped, self.W.T)
-            grad_input = grad_input_reshaped.reshape(batch_size, seq_len, input_dim)
+            # Calcula o gradiente em relação à entrada e volta à forma original
+            grad_input = np.dot(grad_output_reshaped, self.W.T)
+            grad_input = grad_input.reshape(batch_size, seq_len, input_dim)
+            return grad_input
         else:
-            # Se o grad_output vier com uma dimensão extra (por exemplo, shape (batch_size, 1, out_features)),
-            # squeeze para transformar em 2D.
-            if grad_output.ndim == 3 and grad_output.shape[1] == 1:
-                grad_output = grad_output.squeeze(1)
-            # Para entradas 2D, calcula os gradientes diretamente
             self.dW = np.dot(self.input.T, grad_output)
             self.db = np.sum(grad_output, axis=0, keepdims=True)
             grad_input = np.dot(grad_output, self.W.T)
-        
-        return grad_input
+            return grad_input
 
     def update(self, lr):
         # Atualiza os parâmetros usando descida de gradiente
