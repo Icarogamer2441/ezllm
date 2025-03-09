@@ -11,3 +11,6 @@ ezllm/__pycache__
 ezllm/tests/__pycache__
 
 ai.png
+
+build/
+dist/
