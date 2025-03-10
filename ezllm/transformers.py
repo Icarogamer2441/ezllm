@@ -1,6 +1,6 @@
 import numpy as np
 import re
-from ezllm.layers import Dense, ReLU
+from ezllm.layers import Dense, ReLU, Dropout
 from ezllm.attentions import MultiHeadAttention
 
 # ===== NOVAS CLASSES PARA MELHORAR O SISTEMA =====
@@ -39,19 +39,26 @@ class PositionalEncoding:
     """
     Codificação posicional com funções senoidais (sinusoidal).
     """
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
         self.d_model = d_model
-        pe = np.zeros((max_len, d_model), dtype=np.float32)
-        pos = np.arange(0, max_len, dtype=np.float32)[:, np.newaxis]
-        div_term = np.exp(np.arange(0, d_model, 2, dtype=np.float32) * -(np.log(10000.0) / d_model))
-        pe[:, 0::2] = np.sin(pos * div_term)
-        pe[:, 1::2] = np.cos(pos * div_term)
-        self.pe = pe  # shape: (max_len, d_model)
+        self.dropout = Dropout(dropout)
+        # Remove register_buffer and store pe directly
+        self.pe = self._create_pe_matrix(max_len, d_model)
+
+    def _create_pe_matrix(self, max_len, d_model):
+        position = np.arange(max_len)[:, np.newaxis]
+        div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+        
+        pe = np.zeros((max_len, d_model))
+        pe[:, 0::2] = np.sin(position * div_term)
+        pe[:, 1::2] = np.cos(position * div_term)
+        return pe
 
     def forward(self, x):
-        # x: (batch, seq_len, d_model)
         seq_len = x.shape[1]
-        return x + self.pe[:seq_len]
+        x = x * np.sqrt(self.d_model)
+        x = x + self.pe[:seq_len]  # Access stored pe directly
+        return self.dropout.forward(x)
 
 
 class ImprovedTransformerBlock:
@@ -118,7 +125,7 @@ class Transformer:
         # Camada de embedding: transforma vetores one-hot em d_model
         self.embedding = Dense(vocab_size, d_model)
         # Codificação posicional para adicionar informações de posição
-        self.positional_encoding = PositionalEncoding(d_model, max_len)
+        self.positional_encoding = PositionalEncoding(d_model, max_len=max_len)
         # Stack com blocos Transformer melhorados (pre‑norm)
         self.blocks = [ImprovedTransformerBlock(d_model, num_heads, d_ff) for _ in range(num_layers)]
         # Camada de normalização final opcional

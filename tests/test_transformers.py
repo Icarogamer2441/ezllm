@@ -32,7 +32,8 @@ def test_transformer_text_completion():
         d_model=16,      # Vetores de embedding de tamanho 16
         num_heads=2,     # 2 cabeças de atenção
         d_ff=32,         # Rede feed-forward com camada interna de tamanho 32
-        vocab_size=vocab_size   # Vocabulário de tamanho 100
+        vocab_size=vocab_size,
+        max_len=1000
     )
     
     epochs = 200
