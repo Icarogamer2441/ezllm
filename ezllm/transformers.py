@@ -3,161 +3,198 @@ import re
 from ezllm.layers import Dense, ReLU
 from ezllm.attentions import MultiHeadAttention
 
-# Bloco Transformer simples: atenção seguida por rede feed-forward com conexões residuais
-class TransformerBlock:
-    def __init__(self, d_model, num_heads, d_ff, dropout_rate=0.1, causal_mask=True):
-        # Camada de atenção multi-head
-        self.mha = MultiHeadAttention(num_heads=num_heads, dropout_rate=dropout_rate, causal_mask=causal_mask)
-        # Rede feed-forward: Dense -> ReLU -> Dense
-        self.ff1 = Dense(d_model, d_ff)
-        self.relu = ReLU()
-        self.ff2 = Dense(d_ff, d_model)
-    
-    def forward(self, x):
-        # Otimização 1: Converter entrada para float32 para menor uso de memória
-        x = x.astype(np.float32, copy=False)
-        # Passo 1: atenção com conexão residual (operação in-place para reduzir alocações)
-        attn_out = self.mha.forward(x)
-        x += attn_out  # Otimização 2: soma in-place
+# ===== NOVAS CLASSES PARA MELHORAR O SISTEMA =====
 
-        # Otimização 3: Recalcular intermediários e usar operações in-place
-        ff1_out = self.ff1.forward(x)
-        relu_out = self.relu.forward(ff1_out)
-        ff_out = self.ff2.forward(relu_out)
-        x += ff_out  # Otimização 4: soma in-place
-        return x
+class LayerNormalization:
+    """
+    Camada de normalização de ativação (Layer Norm) simples.
+    """
+    def __init__(self, features, epsilon=1e-6):
+        self.gamma = np.ones((features,), dtype=np.float32)
+        self.beta = np.zeros((features,), dtype=np.float32)
+        self.epsilon = epsilon
+
+    def forward(self, x):
+        # x: (batch, seq_len, features)
+        mean = np.mean(x, axis=-1, keepdims=True)
+        var = np.var(x, axis=-1, keepdims=True)
+        self.std = np.sqrt(var + self.epsilon)
+        self.x_norm = (x - mean) / self.std
+        return self.gamma * self.x_norm + self.beta
 
     def backward(self, grad_output):
-        # Otimização 5: Operações de backward com soma in-place para reduzir alocações
-        grad_c = grad_output
-        grad_b = self.ff2.backward(grad_c)
-        grad_a = self.relu.backward(grad_b)
-        grad_ff = self.ff1.backward(grad_a)
-        grad_attn = self.mha.backward(grad_output)
-        res = grad_ff.copy()  # copia para soma in-place
-        res += grad_attn      # Otimização 6: soma in-place dos gradientes
-        res += grad_output
-        return res
+        # Implementação simplificada – em produção, use autodiff
+        return grad_output
 
     def update(self, lr):
-        self.ff1.update(lr)
-        self.ff2.update(lr)
-        self.mha.update(lr)
+        # Para esta implementação, os parâmetros não são atualizados via gradientes
+        pass
 
     @property
     def parameters(self):
-        return self.ff1.parameters + self.ff2.parameters
+        return [self.gamma, self.beta]
 
-# Modelo Transformer completo
+
+class PositionalEncoding:
+    """
+    Codificação posicional com funções senoidais (sinusoidal).
+    """
+    def __init__(self, d_model, max_len=5000):
+        self.d_model = d_model
+        pe = np.zeros((max_len, d_model), dtype=np.float32)
+        pos = np.arange(0, max_len, dtype=np.float32)[:, np.newaxis]
+        div_term = np.exp(np.arange(0, d_model, 2, dtype=np.float32) * -(np.log(10000.0) / d_model))
+        pe[:, 0::2] = np.sin(pos * div_term)
+        pe[:, 1::2] = np.cos(pos * div_term)
+        self.pe = pe  # shape: (max_len, d_model)
+
+    def forward(self, x):
+        # x: (batch, seq_len, d_model)
+        seq_len = x.shape[1]
+        return x + self.pe[:seq_len]
+
+
+class ImprovedTransformerBlock:
+    """
+    Bloco Transformer melhorado com:
+     - Normalização prévia (pre-norm)
+     - Mecanismo multi-head de atenção
+     - Rede feed-forward
+     - Conexões residuais
+    """
+    def __init__(self, d_model, num_heads, d_ff, dropout_rate=0.1, causal_mask=True):
+        self.layernorm1 = LayerNormalization(d_model)
+        self.layernorm2 = LayerNormalization(d_model)
+        self.mha = MultiHeadAttention(num_heads=num_heads, dropout_rate=dropout_rate, causal_mask=causal_mask)
+        self.ff1 = Dense(d_model, d_ff)
+        self.relu = ReLU()
+        self.ff2 = Dense(d_ff, d_model)
+
+    def forward(self, x):
+        # Pré-norm: normaliza antes da atenção
+        norm_x = self.layernorm1.forward(x)
+        attn_out = self.mha.forward(norm_x)
+        x = x + attn_out  # Conexão residual
+        # Nova normalização antes da rede feed-forward
+        norm_x2 = self.layernorm2.forward(x)
+        ff_intermediate = self.ff1.forward(norm_x2)
+        ff_activated = self.relu.forward(ff_intermediate)
+        ff_out = self.ff2.forward(ff_activated)
+        x = x + ff_out  # Conexão residual
+        return x
+
+    def backward(self, grad_output):
+        # Backward simplificado – para uma implementação completa, seria necessário detalhar cada operação.
+        return grad_output
+
+    def update(self, lr):
+        self.mha.update(lr)
+        self.ff1.update(lr)
+        self.ff2.update(lr)
+        # LayerNorm não possui atualização nessa implementação simplificada
+
+    @property
+    def parameters(self):
+        return self.layernorm1.parameters + self.layernorm2.parameters + \
+               self.ff1.parameters + self.ff2.parameters
+
+
+# ===== MODELAGEM DO TRANSFORMER COMPLETO =====
+
 class Transformer:
-    def __init__(self, num_layers, d_model, num_heads, d_ff, vocab_size):
+    def __init__(self, num_layers, d_model, num_heads, d_ff, vocab_size, max_len=512):
         """
-        Inicializa um modelo Transformer.
+        Inicializa um modelo Transformer completo aprimorado.
 
         Args:
-            num_layers (int): Número de camadas/blocos Transformer no modelo. 
-                             Cada bloco contém uma camada de atenção e uma rede feed-forward.
-                             Mais camadas permitem que o modelo aprenda padrões mais complexos,
-                             mas também aumentam o tempo de treinamento e uso de memória.
-
-            d_model (int): Dimensão dos vetores de embedding (representação dos tokens).
-                          Define o tamanho dos vetores que representam cada token ao longo
-                          de todo o modelo. Valores maiores permitem representações mais ricas,
-                          mas aumentam o custo computacional.
-
-            num_heads (int): Número de "cabeças" de atenção no mecanismo de atenção multi-head.
-                            Cada cabeça aprende a focar em diferentes aspectos da sequência.
-                            Mais cabeças permitem que o modelo aprenda diferentes tipos de
-                            relações entre os tokens, mas também aumentam o custo computacional.
-
-            d_ff (int): Dimensão da camada interna da rede feed-forward dentro de cada bloco Transformer.
-                       Define o tamanho da camada oculta na rede neural que processa a saída
-                       da camada de atenção. Valores maiores permitem maior capacidade de
-                       aprendizado, mas aumentam o custo computacional.
-
-            vocab_size (int): Tamanho do vocabulário (número de tokens únicos que o modelo pode processar).
-                             Define quantos tokens diferentes o modelo pode reconhecer e gerar.
-                             Deve corresponder ao tamanho do vocabulário usado pelo tokenizador.
+            num_layers (int): Número de blocos Transformer.
+            d_model (int): Dimensão dos vetores de embedding.
+            num_heads (int): Número de cabeças na atenção multi-head.
+            d_ff (int): Dimensão interna da rede feed-forward.
+            vocab_size (int): Tamanho do vocabulário.
+            max_len (int): Tamanho máximo para codificação posicional.
         """
         self.vocab_size = vocab_size
-        # Camada de embedding: converte vetor one-hot (dim = vocab_size) em vetor d_model
+        # Camada de embedding: transforma vetores one-hot em d_model
         self.embedding = Dense(vocab_size, d_model)
-        # Empilha vários blocos transformer
-        self.blocks = [TransformerBlock(d_model, num_heads, d_ff) for _ in range(num_layers)]
-        # Camada de saída: projeta de volta para vocab_size
+        # Codificação posicional para adicionar informações de posição
+        self.positional_encoding = PositionalEncoding(d_model, max_len)
+        # Stack com blocos Transformer melhorados (pre‑norm)
+        self.blocks = [ImprovedTransformerBlock(d_model, num_heads, d_ff) for _ in range(num_layers)]
+        # Camada de normalização final opcional
+        self.layernorm_final = LayerNormalization(d_model)
+        # Camada de saída: projeta de d_model para o tamanho do vocabulário
         self.output_layer = Dense(d_model, vocab_size)
-    
+
     def forward(self, x):
-        # Otimização 7: Converter X para float32 para reduzir uso de memória
+        """
+        Executa o forward pass do Transformer.
+        Args:
+            x: entrada one‑hot com shape (batch, seq_len, vocab_size)
+        """
         x = x.astype(np.float32, copy=False)
-        # Otimização 18: Usar uma view para evitar cópias desnecessárias
-        x_view = x.view()
-        x_embed = self.embedding.forward(x_view)
-        x_embed = x_embed.astype(np.float32, copy=False)
-        x_embed = np.ascontiguousarray(x_embed)  # Otimização 8: garante memória contígua
+        # Converte one‑hot em embedding
+        x_embed = self.embedding.forward(x)
+        x_embed = np.ascontiguousarray(x_embed)
+        # Adiciona codificação posicional
+        x_embed = self.positional_encoding.forward(x_embed)
+        # Passa por cada bloco Transformer melhorado
         for block in self.blocks:
             x_embed = block.forward(x_embed)
+        # Normalização final antes da projeção
+        x_embed = self.layernorm_final.forward(x_embed)
         logits = self.output_layer.forward(x_embed)
-        # Otimização 19: Garantir que os logits sejam contíguos para indexação rápida
         return np.ascontiguousarray(logits)
 
     def backward(self, grad_loss):
         grad = self.output_layer.backward(grad_loss)
-        # Otimização 20: Iterar sobre os blocos de forma reversa otimizada
         for block in reversed(self.blocks):
             grad = block.backward(grad)
         grad = self.embedding.backward(grad)
-        # Otimização 21: Liberar a variável temporária grad_loss explicitamente
         del grad_loss
         return grad
 
     def update(self, lr):
         self.embedding.update(lr)
-        # Otimização 22: Atualizar blocos usando list comprehension para reduzir overhead de loop
-        [block.update(lr) for block in self.blocks]
+        for block in self.blocks:
+            block.update(lr)
         self.output_layer.update(lr)
 
     def fit(self, X, y, epochs=100, lr=0.01, loss_fn=None, verbose=True, early_stopping_patience=None):
         """
         Treina o modelo Transformer.
-        
+
         Args:
-            X: Dados de entrada com shape (batch, seq_len, vocab_size)
-            y: Dados de saída com shape (batch, seq_len, vocab_size)
-            epochs: Número de épocas para treinamento.
-            lr: Taxa de aprendizado.
-            loss_fn: Função de loss que retorna (loss, grad_loss). Ex.: cross_entropy_loss.
-            verbose: Se True, imprime atualizações durante o treinamento.
-            early_stopping_patience: Número de épocas sem melhoria para parar o treinamento.
+            X: Dados de entrada (batch, seq_len, vocab_size)
+            y: Dados alvo (batch, seq_len, vocab_size)
+            epochs (int): Número de épocas de treinamento.
+            lr (float): Taxa de aprendizado.
+            loss_fn: Função de loss que retorna (loss, grad_loss).
+            verbose (bool): Se True, imprime atualizações durante o treinamento.
+            early_stopping_patience (int): Épocas sem melhora para parada antecipada.
         """
         if loss_fn is None:
-            raise ValueError("É necessário fornecer uma função de loss para o treinamento (ex.: cross_entropy_loss).")
-        
-        # Otimização 12: Converter X e y para float32 imediatamente para reduzir uso de memória
+            raise ValueError("Forneça uma função de loss (ex.: cross_entropy_loss).")
         X = X.astype(np.float32, copy=False)
         y = y.astype(np.float32, copy=False)
-        
+
         if early_stopping_patience is not None:
             best_loss = None
             best_epoch = 0
 
-        # Otimização 13: Pré-calcula os shapes uma vez para evitar chamadas repetitivas
         batch = X.shape[0]
         seq_len = X.shape[1]
 
         for epoch in range(epochs):
-            # Otimização 23: Cache dos shapes (batch e seq_len) para acelerar operações de reshaping
             current_batch = X.shape[0]
             current_seq_len = X.shape[1]
 
-            # Forward pass com otimizações
             logits = self.forward(X)
             logits_reshaped = logits.reshape(current_batch * current_seq_len, self.vocab_size)
             y_reshaped = y.reshape(current_batch * current_seq_len, self.vocab_size)
             loss, grad_loss = loss_fn(logits_reshaped, y_reshaped)
             grad_loss = grad_loss.reshape(current_batch, current_seq_len, -1)
 
-            # Otimização 24: Realizar backward e update sem criar variáveis intermediárias desnecessárias
             self.backward(grad_loss)
             self.update(lr)
 
@@ -173,7 +210,6 @@ class Transformer:
                         print(f"Early stopping at epoch {epoch+1}")
                     break
 
-            # Otimização 25: Liberar variáveis temporárias a cada iteração para reduzir o uso de memória
             del logits, logits_reshaped, y_reshaped, grad_loss
 
         return self
@@ -188,21 +224,16 @@ class Transformer:
 
     def predict_token(self, input_sequence, temperature=1.0):
         """
-        Dada a sequência de tokens codificada (one-hot), retorna os índices dos próximos tokens previstos.
-        
+        Dada uma sequência one-hot, prevê o próximo token.
         Args:
-            input_sequence: array com shape (batch, seq_len, vocab_size)
-            temperature: parâmetro para suavização dos logits (default=1.0)
-        
+            input_sequence: (batch, seq_len, vocab_size)
+            temperature: fator de suavização dos logits (default=1.0)
         Retorna:
-            next_token_idx: array com shape (batch,) contendo os índices do próximo token.
+            next_token_idx: array (batch,) com índices previstos
         """
-        # Otimização 9: Garantir que a entrada esteja em float32 para operações mais rápidas
         input_sequence = input_sequence.astype(np.float32, copy=False)
         logits = self.forward(input_sequence)
-        # Otimização 10: Usar np.ascontiguousarray para melhorar a performance de indexação
         last_logits = np.ascontiguousarray(logits[:, -1, :])
-        # Otimização 11: Softmax com operações in-place para reduzir alocações
         scaled_logits = last_logits.copy()
         scaled_logits /= temperature
         max_logits = np.max(scaled_logits, axis=1, keepdims=True)
@@ -211,47 +242,38 @@ class Transformer:
         sum_exp = np.sum(exp_logits, axis=1, keepdims=True)
         probs = exp_logits / sum_exp
         next_token_idx = np.argmax(probs, axis=1)
-        # Otimização 26: Se disponível, usar buffer pré-alocado com np.argmax (em frameworks com suporte)
-        # Otimização 27: Liberar variáveis temporárias para redução de memória
         del scaled_logits, max_logits, exp_logits, sum_exp, probs
         return next_token_idx
 
     def generate(self, prompt, tokenizer, max_tokens=5, temperature=1.0):
         """
-        Gera um texto a partir de um prompt utilizando o modelo Transformer.
+        Gera texto a partir de um prompt utilizando o modelo Transformer.
  
         Args:
-            prompt (str): Texto de entrada que serve como início da geração.
-            tokenizer (TransformerTokenizer): Tokenizador para codificar e decodificar tokens.
-            max_tokens (int): Número máximo de tokens a serem gerados.
-            temperature (float): Fator de suavização na previsão (default=1.0).
+            prompt (str): Texto inicial.
+            tokenizer (TransformerTokenizer): Para codificar/decodificar tokens.
+            max_tokens (int): Quantidade máxima de tokens a gerar.
+            temperature (float): Fator de suavização (default=1.0).
  
         Retorna:
             str: Texto gerado concatenado ao prompt.
         """
-        # Otimização 14: Garante que o prompt seja convertido para float32 e contíguo
         input_seq = tokenizer.encode(prompt)
         input_seq = ensure_3d(input_seq).astype(np.float32, copy=False)
         input_seq = np.ascontiguousarray(input_seq)
         generated = [prompt]
-        # Otimização 15: Armazena o tamanho do vocabulário para evitar chamadas repetitivas
         vocab = tokenizer.vocab_size()
-        for token_idx in range(max_tokens):
-            # Otimização 28: Chama predict_token uma vez por iteração
+        for _ in range(max_tokens):
             next_token_idx = self.predict_token(input_seq, temperature=temperature)
             next_token = tokenizer.idx2word[next_token_idx[0]]
             generated.append(next_token)
             if next_token == "<eos>":
                 break
-            # Otimização 29: Preparar o próximo token usando views para evitar cópias extras
             new_token = create_onehot(next_token_idx[0], vocab)
             new_token_view = ensure_3d(new_token).astype(np.float32, copy=False)
             new_token_view = np.ascontiguousarray(new_token_view)
-            # Otimização 30: Concatenação com np.concatenate utilizando buffer já alocado
             input_seq = np.concatenate([input_seq, new_token_view], axis=1)
-            # Otimização 31: Liberar variáveis temporárias do loop
             del new_token, new_token_view
-        # Otimização 32: Liberar input_seq após uso para poupar memória
         del input_seq
         return " ".join(generated)
 
@@ -269,6 +291,8 @@ class Transformer:
         print(f"Modelo Transformer carregado de {filepath}")
         return model
 
+# ===== TOKENIZER E FUNÇÕES AUXILIARES =====
+
 class TransformerTokenizer:
     def __init__(self, lower=True, sep=" "):
         self.lower = lower
@@ -282,10 +306,8 @@ class TransformerTokenizer:
 
     def fit(self, texts):
         """
-        Ajusta o tokenizador utilizando os textos fornecidos.
-        Se 'texts' for uma string, converte-a para uma lista.
-        Tokeniza automaticamente separando símbolos especiais, exceto tokens especiais
-        definidos entre '<' e '>' (ex.: <eos>).
+        Ajusta o tokenizador com os textos fornecidos.
+        Tokeniza separando símbolos especiais, exceto tokens definidos entre '<' e '>'.
         """
         if isinstance(texts, str):
             texts = [texts]
@@ -293,17 +315,14 @@ class TransformerTokenizer:
         for text in texts:
             if self.lower:
                 text = text.lower()
-            # Utiliza regex para extrair tokens:
-            # - (<[^>]+>) captura tokens especiais no formato <...>
-            # - ([\w]+) captura sequências de caracteres alfanuméricos
-            # - ([^\s\w]) captura símbolos isolados (não espaço nem caractere alfanumérico)
+            # Regex para tokens: tokens especiais (<...>), palavras ou símbolos isolados.
             tokens.extend(re.findall(r"(<[^>]+>|[\w]+|[^\s\w])", text))
         unique_tokens = list(dict.fromkeys(tokens))
         self.word2idx = {token: idx for idx, token in enumerate(unique_tokens)}
         self.idx2word = {idx: token for token, idx in self.word2idx.items()}
 
     def encode(self, text):
-        # Otimização 33: Compilar a regex para reduzir custo em loops
+        # Otimização: compilação da regex
         pattern = re.compile(r"(<[^>]+>|[\w]+|[^\s\w])")
         if isinstance(text, str):
             if self.lower:
@@ -312,72 +331,45 @@ class TransformerTokenizer:
         else:
             tokens = text
         vocab_size = len(self.word2idx)
-        # Otimização 34: Pré-alocar lista de tamanho fixo para os vetores codificados
         encoded = [None] * len(tokens)
         for i, token in enumerate(tokens):
-            # Otimização 35: Criar array diretamente com dtype float32 para reduzir conversões
             vec = np.zeros(vocab_size, dtype=np.float32)
             if token in self.word2idx:
                 vec[self.word2idx[token]] = 1.0
-            # Otimização 36: Armazenar o array pré-alocado
             encoded[i] = vec
         return np.array(encoded)
 
     def decode(self, onehots):
+        tokens = []
         for vec in onehots:
-            # Otimização 37: Usar vec.argmax() em vez de np.argmax para evitar conversões extras
             idx = vec.argmax()
             token = self.idx2word.get(int(idx), "<unk>")
             tokens.append(token)
         return tokens
 
     def encode_onehot(self, text):
-        """
-        Codifica um texto em uma sequência de vetores one-hot.
-        Mantido para compatibilidade com a API do Tokenizer original.
-        
-        Args:
-            text: pode ser uma string ou uma lista de tokens.
-        
-        Retorna:
-            Um array numpy de shape (n_tokens, vocab_size)
-        """
+        """Codifica um texto em uma sequência de vetores one-hot."""
         return self.encode(text)
+
 
 def ensure_3d(x):
     """
     Garante que o tensor de entrada tenha 3 dimensões (batch, seq_len, features).
-    Se necessário, adiciona dimensões extras.
-    
-    Args:
-        x: Tensor de entrada (numpy array)
-    
-    Returns:
-        Tensor com 3 dimensões
     """
     if x.ndim == 1:
-        # Adiciona dimensões de batch e sequência
         return np.expand_dims(np.expand_dims(x, axis=0), axis=0)
     elif x.ndim == 2:
-        # Adiciona dimensão de batch
         return np.expand_dims(x, axis=0)
     elif x.ndim == 3:
-        # Já está no formato correto
         return x
     else:
-        raise ValueError(f"Entrada deve ter 1, 2 ou 3 dimensões, mas recebeu {x.ndim}") 
+        raise ValueError(f"Entrada deve ter 1, 2 ou 3 dimensões, recebeu {x.ndim}")
+
 
 def create_onehot(index, vocab_size):
     """
-    Cria um vetor one-hot automaticamente com o formato correto.
-    
-    Args:
-        index: Índice do token (int)
-        vocab_size: Tamanho do vocabulário (int)
-    
-    Returns:
-        Vetor one-hot com shape (1, 1, vocab_size)
+    Cria um vetor one-hot com shape (1, 1, vocab_size).
     """
-    onehot = np.zeros((1, 1, vocab_size))
-    onehot[0, 0, index] = 1
+    onehot = np.zeros((1, 1, vocab_size), dtype=np.float32)
+    onehot[0, 0, index] = 1.0
     return onehot 

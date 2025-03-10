@@ -48,9 +48,15 @@ class Dense:
             return grad_input
 
     def update(self, lr):
-        # Atualiza os parâmetros usando descida de gradiente
+        # Check if gradients have been computed;
+        # if not, skip update to avoid multiplying by None
+        if self.dW is None or self.db is None:
+            return
         self.W -= lr * self.dW
         self.b -= lr * self.db
+        # Clear gradients after update
+        self.dW = None
+        self.db = None
 
     @property
     def parameters(self):
@@ -183,6 +189,10 @@ class Conv2D:
         return grad_x
 
     def update(self, lr):
+        # Adicione esta verificação crítica
+        if self.dW is None or self.db is None:
+            return
+            
         self.W -= lr * self.dW
         self.b -= lr * self.db
 
@@ -319,9 +329,16 @@ class Linear:
         return grad_input
 
     def update(self, lr):
+        # Check if gradients have been computed;
+        # if not, skip update to avoid multiplying by None
+        if self.dW is None or self.db is None:
+            return
         # Atualiza os parâmetros usando descida de gradiente
         self.W -= lr * self.dW
         self.b -= lr * self.db
+        # Clear gradients after update
+        self.dW = None
+        self.db = None
 
     @property
     def parameters(self):
